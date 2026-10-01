@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lace Border</title>
+<!--
+  蕾丝花边动画素材（p5.js）
+  ------------------------------------------------------------
+  嵌入方式（贴到你的网页里）：
+
+    <iframe src="lace-border.html"
+            style="width:100%; aspect-ratio:800/110; border:0; display:block;"
+            loading="lazy" title="蕾丝花边"></iframe>
+
+  网址参数（可选，接在档名后面，例如 lace-border.html?bg=fdf6f8&loop=3）：
+    bg     背景色，16 进位不含 #，或 transparent（预设 ffffff）
+    mask   叶片内部的遮罩色，要跟页面底色一样（预设 = bg；bg 透明时预设 ffffff）
+    color  蕾丝线条颜色（预设 cda4b0）
+    speed  动画速度（预设 0.0045，数字越大越快）
+    loop   播完后停几秒再重播；0 = 只播一次（预设 2 秒后重播）
+    start  load = 载入就播（预设）；view = 捲动到画面中才开始播
+    still  设为 1 时直接显示完成图，不播动画
+    pad    花边上下留白，单位为设计像素（预设 8）
+-->
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: transparent; }
+  canvas { display: block; width: 100% !important; height: auto !important; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+</head>
+<body>
+<script>
+// =====================================================
+// 设定（读取网址参数）
+// =====================================================
+
+const params = new URLSearchParams(location.search);
+
+function hexToRGB(hex, fallback) {
+  if (!hex) return fallback;
+  hex = hex.replace('#', '');
+  if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return fallback;
+  return [0, 2, 4].map(i => parseInt(hex.slice(i, i + 2), 16));
+}
+
+const bgParam = (params.get('bg') || 'ffffff').toLowerCase();
+const isTransparent = bgParam === 'transparent';
+const bgColor = isTransparent ? null : hexToRGB(bgParam, [255, 255, 255]);
+const maskColor = hexToRGB(params.get('mask'), bgColor || [255, 255, 255]);
+const lacePink = hexToRGB(params.get('color'), [205, 164, 176]);
+const laceFps = Math.min(60, Math.max(10, parseFloat(params.get('fps')) || 60));   // 幀率上限；速度會自動補償，動畫總時間不變
+const speed = (parseFloat(params.get('speed')) || 0.0045) * (60 / laceFps);
+const loopDelay = params.has('loop') ? (parseFloat(params.get('loop')) || 0) : 2;
+const startMode = params.get('start') === 'view' ? 'view' : 'load';
+// hold=1：載入後先等待，收到父頁面的 'day11-start' 才開始長（讓多條蕾絲依序生長，不同時搶資源）
+const holdStart = params.get('hold') === '1';
+const laceId = params.get('id') || '';
+const pad = params.has('pad') ? parseFloat(params.get('pad')) : 8;
+// 只有网址加上 ?still=1 才会直接显示完成图（不再跟随系统的「减少动态效果」设定）
+const reduceMotion = params.get('still') === '1';
+
+// =====================================================
+// 原始尺寸与位置（与原程式相同）
+// =====================================================
+
+// 網址參數 w：花邊長度（設計像素，預設 800）。加長時圖案會繼續重複延伸，不會被拉伸變形。
+const DESIGN_W = Math.max(200, parseInt(params.get('w'), 10) || 800);
+const DESIGN_H = 400;
+
+const laceY = 145;
+const laceH = 115;
+
+const topBandY = laceY + 22;
+const bottomBandY = laceY + laceH - 22;
+
+// 原本 800x400 画布里，图案实际只占约 y=156 ~ 249。
+// 为了方便排版，输出的画布只裁出这一条花边。
+const CONTENT_TOP = 156;
+const CONTENT_BOTTOM = 249;
+const cropTop = CONTENT_TOP - pad;
+const cropH = Math.round(CONTENT_BOTTOM - CONTENT_TOP + pad * 2);
+
+// =====================================================
+// 状态
+// =====================================================
+
+let progress = 0;
+let bg;
+let fg;
+let bgDone = false;
+let motifStates = [];
+let started = false;
+
+// =====================================================
+// SETUP
+// =====================================================
+
+function setup() {
+  // 依照实际显示宽度决定解析度，让画布放大到整个版面宽度时仍然清晰
+  const cssW = Math.max(window.innerWidth, 1);
+  const density = Math.min(2, Math.max(1, Math.ceil((cssW * (window.devicePixelRatio || 1)) / DESIGN_W)));
+  pixelDensity(params.has('d') ? (parseFloat(params.get('d')) || 1) : density);   // d=1：不放大解析度，運算量少約 4 倍
+
+  createCanvas(DESIGN_W, cropH);
+  frameRate(laceFps);
+
+  bg = createGraphics(DESIGN_W, DESIGN_H);
+  bg.clear();
+
+  fg = createGraphics(DESIGN_W, DESIGN_H);
+  fg.clear();
+
+  paintBackground();
+
+  if (reduceMotion) {
+    // 使用者关闭动态效果：直接显示完成的图案
+    progress = 1;
+    started = true;
+    redraw();
+    noLoop();
+    return;
+  }
+
+  // 点一下花边可以重播
+  document.querySelector('canvas').addEventListener('click', () => {
+    started = true;
+    restart();
+  });
+
+  if (holdStart) {
+    started = false;
+    noLoop();
+    window.addEventListener('message', (e) => {
+      if (e.data === 'day11-start') { started = true; loop(); }
+    });
+    parent.postMessage({ day11: 'lace-ready', id: laceId }, '*');
+  } else if (startMode === 'load' || !('IntersectionObserver' in window)) {
+    started = true;
+  } else {
+    noLoop();
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some(e => e.isIntersecting) && !started) {
+        started = true;
+        loop();
+        io.disconnect();
+      }
+    }, { threshold: 0.25 });
+    io.observe(document.querySelector('canvas'));
+  }
+}
+
+function paintBackground() {
+  if (bgColor) background(bgColor[0], bgColor[1], bgColor[2]);
+  else clear();
+}
+
+// =====================================================
+// DRAW
+// =====================================================
+
+function draw() {
+  paintBackground();
+  if (!started) return;
+
+  // 背景层：网格、花边、粗线
+  if (!bgDone) {
+    bg.clear();
+    drawBackgroundLayer(bg, progress);
+    if (progress >= 1) bgDone = true;
+  }
+  image(bg, 0, -cropTop, DESIGN_W, DESIGN_H);
+
+  // 前景层：花与叶
+  drawForegroundLayer(fg, progress);
+  image(fg, 0, -cropTop, DESIGN_W, DESIGN_H);
+
+  if (progress >= 1) {
+    // 画完就停止重绘，节省效能
+    noLoop();
+    parent.postMessage({ day11: 'lace-done', id: laceId }, '*');
+    if (loopDelay > 0 && !reduceMotion) {
+      setTimeout(restart, loopDelay * 1000);
+    }
+  } else {
+    progress = Math.min(1, progress + speed);
+  }
+}
+
+function restart() {
+  progress = 0;
+  bgDone = false;
+  motifStates = [];
+  bg.clear();
+  fg.clear();
+  loop();
+}
+
+// =====================================================
+// 背景层
+// =====================================================
+
+function drawBackgroundLayer(g, p) {
+  drawFineMesh(g, 0, topBandY, width, bottomBandY - topBandY, p);
+  drawTopEdge(g, 0, laceY, width, p);
+  drawBottomEdge(g, 0, laceY + laceH, width, p);
+  drawHorizontalBand(g, 0, topBandY, width, p);
+  drawHorizontalBand(g, 0, bottomBandY, width, p);
+}
+
+function drawFineMesh(g, x, y, w, h, p) {
+  g.stroke(lacePink[0], lacePink[1], lacePink[2], 88);
+  g.strokeWeight(1.0);
+  let gap = 4;
+
+  for (let i = -h; i < w; i += gap) {
+    let start = constrain((i + h) / (w + h), 0, 1) * 0.55;
+    let lp = constrain(map(p, start, start + 0.25, 0, 1), 0, 1);
+    g.line(x + i, y, x + i + h * lp, y + h * lp);
+  }
+
+  for (let i = 0; i < w + h; i += gap) {
+    let start = constrain(i / (w + h), 0, 1) * 0.55;
+    let lp = constrain(map(p, start, start + 0.25, 0, 1), 0, 1);
+    g.line(x + i, y, x + i - h * lp, y + h * lp);
+  }
+}
+
+function drawHorizontalBand(g, x, y, w, p) {
+  let currentX = x + w * p;
+  g.stroke(lacePink[0], lacePink[1], lacePink[2], 195);
+  g.strokeWeight(3.2);
+  g.line(x, y, currentX, y);
+  g.stroke(lacePink[0], lacePink[1], lacePink[2], 120);
+  g.strokeWeight(0.7);
+  g.line(x, y - 2.4, currentX, y - 2.4);
+  g.line(x, y + 2.4, currentX, y + 2.4);
+}
+
+function drawTopEdge(g, x, y, w, p) {
+  for (let px = x; px < x + w; px += 10) {
+    drawTaperedArc(g, px, y + 16, 11, 9, edgeProgress(p, px, w), PI, TWO_PI, 1.9);
+  }
+}
+
+function drawBottomEdge(g, x, y, w, p) {
+  for (let px = x; px < x + w; px += 10) {
+    drawTaperedArc(g, px, y - 16, 11, 9, edgeProgress(p, px, w), 0, PI, 1.9);
+  }
+}
+
+function edgeProgress(p, px, w) {
+  let start = constrain(px / w, 0, 1) * 0.6;
+  return constrain(map(p, start, start + 0.25, 0, 1), 0, 1);
+}
+
+function drawTaperedArc(g, x, y, w, h, p, startAngle, endAngle, maxWeight) {
+  if (p <= 0) return;
+  let steps = 40;
+  for (let i = 1; i < steps; i++) {
+    let t1 = (i - 1) / steps;
+    let t2 = i / steps;
+    if (t2 > p) break;
+    let a1 = lerp(startAngle, endAngle, t1);
+    let a2 = lerp(startAngle, endAngle, t2);
+    let taper = pow(sin(PI * t1), 0.3);
+    g.stroke(lacePink[0], lacePink[1], lacePink[2], 175);
+    g.strokeWeight(lerp(0.35, maxWeight, taper));
+    g.line(
+      x + w / 2 + (cos(a1) * w) / 2, y + (sin(a1) * h) / 2,
+      x + w / 2 + (cos(a2) * w) / 2, y + (sin(a2) * h) / 2
+    );
+  }
+}
+
+// =====================================================
+// 前景层：花与叶
+// =====================================================
+
+function drawForegroundLayer(g, p) {
+  let spacing = 100;
+  let motifY = laceY + 70;
+  let i = 0;
+
+  for (let px = -35; px < width + spacing; px += spacing) {
+    if (!motifStates[i]) motifStates[i] = { flowerDone: false, leafDone: false };
+    let state = motifStates[i];
+
+    let flowerX = px + 28;
+    if (!state.flowerDone) {
+      let flowerP = horizontalProgress(p, flowerX, width);
+      drawFloralRepeat(g, flowerX, motifY, flowerP);
+      if (flowerP >= 1) state.flowerDone = true;
+    }
+
+    let middleX = flowerX + spacing / 2;
+    if (!state.leafDone) {
+      let middleP = horizontalProgress(p, middleX, width);
+      drawBetweenLeaves(g, middleX, motifY + 3, middleP);
+      if (middleP >= 1) state.leafDone = true;
+    }
+    i++;
+  }
+}
+
+function horizontalProgress(p, objectX, totalW) {
+  let nx = constrain(objectX / totalW, 0, 1);
+  let start = lerp(0.01, 0.62, nx);
+  return constrain(map(p, start, start + 0.28, 0, 1), 0, 1);
+}
+
+function drawFloralRepeat(g, x, y, p) {
+  if (p <= 0) return;
+  g.push();
+  g.translate(x, y);
+
+  drawEmptyLeafCluster(g, -28, -27, localProgress(p, 0.02, 0.62));
+
+  drawCurvedStem(g, 10, -3, 18, -18, 35, -34, constrain(map(p, 0, 0.58, 0, 1), 0, 1));
+
+  g.push(); g.translate(17, -15); g.rotate(-0.82);
+  drawLaceLeaf(g, 0, 0, 12, 22, localProgress(p, 0.05, 0.55));
+  g.pop();
+
+  g.push(); g.translate(24, -22); g.rotate(0.75);
+  drawLaceLeaf(g, 0, 0, 12, 22, localProgress(p, 0.1, 0.62));
+  g.pop();
+
+  g.push(); g.translate(31, -30); g.rotate(-0.62);
+  drawLaceLeaf(g, 0, 0, 10, 19, localProgress(p, 0.16, 0.68));
+  g.pop();
+
+  drawReferenceFlower(g, 0, 2, localProgress(p, 0.05, 1));
+
+  g.pop();
+}
+
+function drawEmptyLeafCluster(g, x, y, p) {
+  if (p <= 0) return;
+  g.push();
+  g.translate(x, y);
+
+  drawCurvedStem(g, 4, 12, 1, 2, -3, -8, localProgress(p, 0, 0.55));
+
+  g.push(); g.translate(0, 3); g.rotate(-0.95);
+  drawEmptyLeaf(g, 0, 0, 10, 18, localProgress(p, 0.05, 0.6));
+  g.pop();
+
+  g.push(); g.translate(4, -2); g.rotate(0.8);
+  drawEmptyLeaf(g, 0, 0, 10, 18, localProgress(p, 0.12, 0.7));
+  g.pop();
+
+  g.push(); g.translate(-2, -7); g.rotate(-0.28);
+  drawEmptyLeaf(g, 0, 0, 9, 16, localProgress(p, 0.2, 0.8));
+  g.pop();
+
+  g.pop();
+}
+
+// 叶片轮廓点（原程式里重复多次的计算，统一成一个函式，结果相同）
+function leafPoints(x, y, w, h, steps) {
+  let pts = [];
+  for (let i = 0; i <= steps; i++) {
+    let t = i / steps;
+    let profile = pow(sin(PI * t), 0.72) * (0.82 + 0.18 * sin(PI * t));
+    pts.push(createVector(x - (w / 2) * profile, y - h * t));
+  }
+  for (let i = steps; i >= 0; i--) {
+    let t = i / steps;
+    let profile = pow(sin(PI * t), 0.72) * (0.82 + 0.18 * sin(PI * t));
+    pts.push(createVector(x + (w / 2) * profile, y - h * t));
+  }
+  return pts;
+}
+
+function drawLeafMask(g, pts) {
+  g.push();
+  g.noStroke();
+  g.fill(maskColor[0], maskColor[1], maskColor[2]);
+  g.beginShape();
+  for (let pt of pts) g.vertex(pt.x, pt.y);
+  g.endShape(CLOSE);
+  g.pop();
+}
+
+function drawEmptyLeaf(g, x, y, w, h, p) {
+  if (p <= 0) return;
+  let pts = leafPoints(x, y, w, h, 40);
+  drawLeafMask(g, pts);
+  drawGrowingShape(g, pts, p, 1.9);
+
+  let veinP = localProgress(p, 0.12, 0.75);
+  g.stroke(lacePink[0], lacePink[1], lacePink[2], 180);
+  g.strokeWeight(0.8);
+  g.line(x, y, x, y - h * veinP);
+}
+
+function drawBetweenLeaves(g, x, y, p) {
+  if (p <= 0) return;
+  g.push();
+  g.translate(x, y);
+
+  drawCurvedStem(g, -14, 4, 0, -2, 15, 1, localProgress(p, 0, 0.55));
+
+  g.push(); g.translate(-9, 2); g.rotate(-1.05);
+  drawLaceLeaf(g, 0, 0, 10, 19, localProgress(p, 0.06, 0.65));
+  g.pop();
+
+  g.push(); g.translate(0, -1); g.rotate(-0.15);
+  drawLaceLeaf(g, 0, 0, 11, 20, localProgress(p, 0.12, 0.72));
+  g.pop();
+
+  g.push(); g.translate(10, 2); g.rotate(1.0);
+  drawLaceLeaf(g, 0, 0, 10, 18, localProgress(p, 0.18, 0.78));
+  g.pop();
+
+  g.pop();
+}
+
+function localProgress(p, start, end) {
+  return constrain(map(p, start, end, 0, 1), 0, 1);
+}
+
+function drawCurvedStem(g, x1, y1, cx, cy, x2, y2, p) {
+  if (p <= 0) return;
+  let steps = 45;
+  g.stroke(lacePink[0], lacePink[1], lacePink[2], 175);
+  g.strokeWeight(1.45);
+  for (let i = 1; i <= steps; i++) {
+    let t1 = (i - 1) / steps;
+    let t2 = i / steps;
+    if (t2 > p) break;
+    g.line(
+      quadraticPoint(x1, cx, x2, t1), quadraticPoint(y1, cy, y2, t1),
+      quadraticPoint(x1, cx, x2, t2), quadraticPoint(y1, cy, y2, t2)
+    );
+  }
+}
+
+function quadraticPoint(a, b, c, t) {
+  return (1 - t) * (1 - t) * a + 2 * (1 - t) * t * b + t * t * c;
+}
+
+// =====================================================
+// 蕾丝花
+// =====================================================
+
+function drawReferenceFlower(g, x, y, p) {
+  if (p <= 0) return;
+  g.push();
+  g.translate(x, y);
+
+  drawFlowerLaceSections(g, localProgress(p, 0.3, 0.82));
+  drawInnerFlowerPetals(g, localProgress(p, 0.38, 0.82));
+  drawFlowerPetalDetails(g, localProgress(p, 0.16, 0.65));
+  drawOrganicFlowerOutline(g, 0, 0, 31, 23, localProgress(p, 0, 0.42));
+  drawFlowerCenter(g, localProgress(p, 0.6, 1));
+
+  g.pop();
+}
+
+function drawOrganicFlowerOutline(g, x, y, w, h, p) {
+  if (p <= 0) return;
+  let pts = [];
+  let steps = 180;
+  for (let i = 0; i <= steps; i++) {
+    let a = map(i, 0, steps, 0, TWO_PI);
+    let wave = 1 + 0.14 * sin(5 * a + 0.3) + 0.07 * sin(8 * a - 0.8) + 0.035 * sin(3 * a + 1.1);
+    pts.push(createVector(x + cos(a) * w * wave, y + sin(a) * h * wave));
+  }
+  drawGrowingShape(g, pts, p, 2.0);
+}
+
+function drawFlowerPetalDetails(g, p) {
+  if (p <= 0) return;
+  g.stroke(lacePink[0], lacePink[1], lacePink[2], 185);
+  g.strokeWeight(1.55);
+  g.noFill();
+  drawGrowingBezier(g, -28, -3, -24, -19, -10, -19, -4, -7, p);
+  drawGrowingBezier(g, -12, -15, -6, -27, 8, -25, 11, -10, p);
+  drawGrowingBezier(g, 6, -10, 15, -22, 28, -17, 29, -3, p);
+  drawGrowingBezier(g, 28, -1, 26, 12, 14, 19, 5, 11, p);
+  drawGrowingBezier(g, 15, 14, 5, 27, -15, 25, -20, 12, p);
+  drawGrowingBezier(g, -20, 13, -31, 9, -32, -1, -21, -8, p);
+}
+
+function drawFlowerLaceSections(g, p) {
+  if (p <= 0) return;
+  drawLacePatch(g, -17, -3, 11, 9, -0.18, p);
+  drawLacePatch(g, -1, -12, 11, 8, 0.05, p);
+  drawLacePatch(g, 17, -3, 11, 9, 0.2, p);
+  drawLacePatch(g, -12, 10, 11, 8, 0.12, p);
+  drawLacePatch(g, 11, 10, 11, 8, -0.12, p);
+}
+
+function drawLacePatch(g, x, y, w, h, rotation, p) {
+  g.push();
+  g.translate(x, y);
+  g.rotate(rotation);
+  g.stroke(lacePink[0], lacePink[1], lacePink[2], 145);
+  g.strokeWeight(0.75);
+  let gap = 3;
+
+  for (let i = -w; i <= w; i += gap) {
+    let start = map(i, -w, w, 0, 0.35);
+    let lp = constrain(map(p, start, start + 0.35, 0, 1), 0, 1);
+    let half = sqrt(max(0, 1 - sq(i / w))) * h;
+    g.line(i, -half * lp, i, half * lp);
+  }
+
+  for (let yy = -h; yy <= h; yy += gap) {
+    let start = map(yy, -h, h, 0, 0.35);
+    let lp = constrain(map(p, start, start + 0.35, 0, 1), 0, 1);
+    let half = sqrt(max(0, 1 - sq(yy / h))) * w;
+    g.line(-half * lp, yy, half * lp, yy);
+  }
+  g.pop();
+}
+
+function drawInnerFlowerPetals(g, p) {
+  if (p <= 0) return;
+  g.stroke(lacePink[0], lacePink[1], lacePink[2], 190);
+  g.strokeWeight(1.65);
+  g.noFill();
+  drawGrowingBezier(g, -15, 2, -13, -10, -3, -13, 1, -3, p);
+  drawGrowingBezier(g, 1, -3, 7, -13, 17, -8, 14, 3, p);
+  drawGrowingBezier(g, 14, 3, 10, 14, -7, 17, -13, 7, p);
+  drawGrowingBezier(g, -8, 4, -4, -5, 6, -5, 9, 2, p);
+}
+
+function drawFlowerCenter(g, p) {
+  if (p <= 0) return;
+  g.stroke(lacePink[0], lacePink[1], lacePink[2], 200);
+  g.noFill();
+  g.strokeWeight(1.5);
+  g.beginShape();
+  let steps = 50;
+  for (let i = 0; i <= steps * p; i++) {
+    let a = map(i, 0, steps, 0, TWO_PI);
+    let r = 5.2 + 1.1 * sin(4 * a);
+    g.vertex(cos(a) * r, sin(a) * r);
+  }
+  g.endShape();
+
+  g.strokeWeight(0.55);
+  for (let a = 0; a < TWO_PI * p; a += PI / 7) {
+    g.line(cos(a) * 1.5, sin(a) * 1.5, cos(a) * 4.3, sin(a) * 4.3);
+  }
+}
+
+// =====================================================
+// 刺绣叶
+// =====================================================
+
+function drawLaceLeaf(g, x, y, w, h, p) {
+  if (p <= 0) return;
+  let pts = leafPoints(x, y, w, h, 45);
+  drawLeafMask(g, pts);
+  drawGrowingShape(g, pts, p, 1.95);
+
+  let veinP = localProgress(p, 0.05, 0.62);
+  g.stroke(lacePink[0], lacePink[1], lacePink[2], 180);
+  g.strokeWeight(0.8);
+  g.line(x, y, x, y - h * veinP);
+
+  drawLeafEmbroidery(g, x, y, w, h, localProgress(p, 0.12, 1));
+}
+
+function drawLeafEmbroidery(g, x, y, w, h, p) {
+  if (p <= 0) return;
+
+  g.stroke(lacePink[0], lacePink[1], lacePink[2], 155);
+  g.strokeWeight(0.52);
+  let stitches = 46;
+  for (let i = 1; i < stitches; i++) {
+    let t = i / stitches;
+    let localP = constrain(map(p, t * 0.45, t * 0.45 + 0.18, 0, 1), 0, 1);
+    if (localP <= 0) continue;
+    let profile = pow(sin(PI * t), 0.72) * (0.82 + 0.18 * sin(PI * t));
+    let halfW = (w / 2) * profile;
+    let yy = y - h * t;
+    let targetY = yy - 1.8;
+    g.line(x - halfW, yy, lerp(x - halfW, x, localP), lerp(yy, targetY, localP));
+    g.line(x + halfW, yy, lerp(x + halfW, x, localP), lerp(yy, targetY, localP));
+  }
+
+  g.stroke(lacePink[0], lacePink[1], lacePink[2], 105);
+  g.strokeWeight(0.32);
+  let fineCount = 60;
+  for (let i = 1; i < fineCount; i++) {
+    let t = i / fineCount;
+    if (t > p) continue;
+    let profile = pow(sin(PI * t), 0.72) * (0.82 + 0.18 * sin(PI * t));
+    let halfW = (w / 2) * profile;
+    let yy = y - h * t;
+    g.line(x - halfW, yy, x, yy - 1.1);
+    g.line(x + halfW, yy, x, yy - 1.1);
+  }
+}
+
+// =====================================================
+// 逐渐长出的线
+// =====================================================
+
+function drawGrowingBezier(g, x1, y1, cx1, cy1, cx2, cy2, x2, y2, p) {
+  if (p <= 0) return;
+  let steps = 50;
+  for (let i = 1; i <= steps; i++) {
+    let t1 = (i - 1) / steps;
+    let t2 = i / steps;
+    if (t2 > p) break;
+    let taper = pow(sin(PI * t1), 0.28);
+    g.strokeWeight(lerp(0.45, 1.65, taper));
+    g.line(
+      bezierPoint(x1, cx1, cx2, x2, t1), bezierPoint(y1, cy1, cy2, y2, t1),
+      bezierPoint(x1, cx1, cx2, x2, t2), bezierPoint(y1, cy1, cy2, y2, t2)
+    );
+  }
+}
+
+function drawGrowingShape(g, points, p, maxWeight) {
+  if (p <= 0) return;
+  let total = points.length - 1;
+  let amount = floor(total * p);
+  for (let i = 0; i < amount; i++) {
+    let taper = pow(sin(PI * (i / total)), 0.25);
+    g.stroke(lacePink[0], lacePink[1], lacePink[2], 180);
+    g.strokeWeight(lerp(0.4, maxWeight, taper));
+    g.line(points[i].x, points[i].y, points[i + 1].x, points[i + 1].y);
+  }
+}
+</script>
+</body>
+</html>

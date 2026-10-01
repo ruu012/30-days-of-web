@@ -1,0 +1,1022 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 11 · A3 排版</title>
+<style>
+  :root { --pink:#fa68b8; --ink:#7a2150; --panel:#fff; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:#3a2f36; font-family:system-ui,-apple-system,"PingFang TC","Microsoft JhengHei",sans-serif; color:var(--ink); overflow:hidden; }
+  #app { display:grid; grid-template-columns:1fr 280px; height:100%; }
+  @media (max-width:820px) {
+    #app { grid-template-columns:1fr; grid-template-rows:1fr 230px; }
+    #panel { border-left:0; border-top:1px solid #e9c6dc; }
+    #hint { display:none; }
+  }
+  body.preview #app { grid-template-columns:1fr; grid-template-rows:1fr; }
+  body.preview #panel { display:none; }
+  #view { position:relative; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+  /* A3 297 x 420 mm：舞台以「舞台寬度 S」為單位，高度 = S * 1.4142 */
+  #stage { position:relative; overflow:hidden; background:#ebc0dd; box-shadow:0 10px 40px rgba(0,0,0,.45); flex:none; }
+  .item { position:absolute; left:0; top:0; transform-origin:center center; }
+  .item > .inner { position:absolute; left:0; top:0; transform-origin:0 0; }
+  .item iframe, .item img { display:block; border:0; }
+  .item img { width:100%; height:100%; user-select:none; -webkit-user-drag:none; }
+  .edit .item.sel { outline:2px dashed #fff; outline-offset:0; box-shadow:0 0 0 1px var(--pink); }
+  .edit .item .cover { position:absolute; inset:0; cursor:move; z-index:5; }
+  .edit .item.locked .cover { display:none; }
+  .item .cover { display:none; }
+  .edit .item .cover { display:block; }
+  .handle { display:none; position:absolute; width:16px; height:16px; right:-8px; bottom:-8px; background:#fff; border:2px solid var(--pink); border-radius:50%; cursor:nwse-resize; z-index:6; }
+  .handle.edge-w { right:-8px; bottom:auto; top:calc(50% - 8px); cursor:ew-resize; border-radius:6px; width:12px; height:24px; right:-6px; }
+  .handle.edge-h { bottom:-6px; right:auto; left:calc(50% - 12px); cursor:ns-resize; border-radius:6px; width:24px; height:12px; }
+  .edit .item.sel .handle { display:block; }
+  #panel { background:var(--panel); padding:14px; overflow:auto; border-left:1px solid #e9c6dc; font-size:13px; }
+  #panel h2 { font-size:15px; margin:0 0 4px; }
+  #panel .sub { opacity:.65; margin-bottom:12px; }
+  .layer { display:flex; align-items:center; gap:6px; padding:7px 8px; border-radius:8px; cursor:pointer; border:1px solid transparent; }
+  .layer:hover { background:#fdeff7; }
+  .layer.sel { background:#fbdcee; border-color:var(--pink); }
+  .layer .n { width:20px; height:20px; border-radius:50%; background:var(--pink); color:#fff; display:grid; place-items:center; font-size:11px; flex:none; }
+  .layer .t { flex:1; }
+  .layer button { border:0; background:none; cursor:pointer; font-size:15px; padding:2px; }
+  .ctl { margin-top:12px; border-top:1px solid #f1d5e6; padding-top:10px; }
+  .ctl label { display:grid; grid-template-columns:52px 1fr 52px; align-items:center; gap:6px; margin:6px 0; }
+  .ctl input[type=range] { width:100%; accent-color:var(--pink); }
+  .ctl input[type=number] { width:100%; font:inherit; padding:2px 4px; border:1px solid #e3b9d3; border-radius:6px; }
+  .btns { display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; }
+  .btns button { font:inherit; padding:6px 11px; border-radius:999px; border:1px solid var(--pink); background:#fff; color:var(--ink); cursor:pointer; }
+  .btns button.primary { background:var(--pink); color:#fff; }
+  #hint { position:absolute; left:12px; bottom:10px; color:#fff; opacity:.7; font-size:12px; pointer-events:none; }
+  .ctl label.big { grid-template-columns:52px 1fr 52px; font-weight:600; }
+  .ctl label.big input[type=range] { height:26px; }
+  .ctl details { margin-top:6px; } .ctl summary { cursor:pointer; opacity:.75; padding:4px 0; }
+  #toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%) translateY(20px); background:#7a2150; color:#fff; padding:9px 16px; border-radius:999px; font-size:13px; opacity:0; pointer-events:none; transition:.25s; z-index:99; }
+  #toast.show { opacity:1; transform:translateX(-50%); }
+  #camUI { position:absolute; z-index:100; display:none; flex-direction:column; align-items:center; gap:6px; transform:translate(-50%,-50%); white-space:nowrap; pointer-events:auto; }
+  #camUI.show { display:flex; animation:camIn .6s ease both; }
+  @keyframes camIn { from { opacity:0; transform:translate(-50%,-50%) translateY(8px); } to { opacity:1; transform:translate(-50%,-50%); } }
+  #camBtn { font:inherit; font-weight:600; padding:.45em 1.1em; border-radius:999px; border:1.5px solid #fff; background:rgba(255,255,255,.88); color:#7a2150; cursor:pointer; box-shadow:0 2px 10px rgba(122,33,80,.25); }
+  #camBtn.on { background:#fa68b8; color:#fff; }
+  #camBtn:disabled { opacity:.6; cursor:wait; }
+  #camStatus { font-size:.78em; color:#7a2150; background:rgba(255,255,255,.6); padding:.2em .7em; border-radius:999px; }
+  #handCursor { position:absolute; left:0; top:0; z-index:200; display:none; pointer-events:none; line-height:1; filter:drop-shadow(0 2px 4px rgba(122,33,80,.45)); will-change:transform; }
+  #camFrame { display:none; position:absolute; left:auto; top:auto; right:12px; bottom:12px; width:200px; z-index:60; border-radius:12px; overflow:hidden; background:#2a1f26; box-shadow:0 4px 18px rgba(0,0,0,.45); user-select:none; touch-action:none; }
+  #camHead { display:flex; align-items:center; gap:6px; padding:5px 8px; background:#7a2150; color:#fff; font-size:11px; cursor:grab; }
+  #camHead.drag { cursor:grabbing; }
+  #camHead .t { flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #camHead button.act { background:#fff; color:#7a2150; }
+  #camHead button { font:inherit; font-size:11px; padding:1px 7px; border-radius:999px; border:1px solid rgba(255,255,255,.7); background:transparent; color:#fff; cursor:pointer; }
+  #camBody { position:relative; line-height:0; }
+  #camBody video, #camBody canvas { display:block; width:100%; height:auto; }
+  #camBody canvas { position:absolute; left:0; top:0; }
+  #camBody.mirror video, #camBody.mirror canvas { transform:scaleX(-1); }
+  #camLegend { font-size:10px; line-height:1.3; padding:4px 8px; background:#3a2a33; color:#fff; }
+  #camLegend b.r { color:#ff7ac6; } #camLegend b.l { color:#6fd8ff; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+<script src="3/ribbon-dots.js"></script>
+</head>
+<body class="edit-on">
+<div id="app">
+  <div id="view">
+    <div id="stage" class="edit"></div>
+    <div id="hint">A3 · 297×420 mm ｜ 點選圖層 → 拖曳移動、右下角圓點縮放</div>
+    
+  </div>
+  <aside id="panel">
+    <h2>Day 11 · A3 排版</h2>
+    <div class="sub">上面的圖層在畫面最上方</div>
+    <div id="layers"></div>
+    <div class="ctl" id="ctl"></div>
+    <div class="ctl">
+      <label style="grid-template-columns:24px 1fr;margin:0 0 8px"><input type="checkbox" id="pauseEdit"><span>編輯時暫停動畫（預覽才播放，操作更順）</span></label>
+      <label style="grid-template-columns:24px 1fr;margin:0 0 8px"><input type="checkbox" id="laceInstant"><span>蕾絲直接顯示（不播生長動畫，最不卡）</span></label>
+      <label style="grid-template-columns:70px 1fr">粒子品質
+        <select id="quality" style="font:inherit;padding:3px;border:1px solid #e3b9d3;border-radius:6px"></select>
+      </label>
+    </div>
+    <div class="btns">
+      <button class="primary" id="btnSave">💾 儲存</button>
+      <button id="btnRot">⟳ 旋轉 90°</button>
+      <button id="btnPreview">預覽（滿版）</button>
+      <button id="btnExport">匯出檔案</button>
+      <button id="btnLoad">匯入檔案</button>
+      <button id="btnReset">還原預設</button>
+    </div>
+    <input type="file" id="fileIn" accept=".json" hidden>
+  </aside>
+</div>
+
+<script>
+/* ============================================================
+   圖層設定
+   單位：舞台寬度 = 1（A3 舞台高度 = 1.4142）
+   cx, cy = 圖層中心；w, h = 尺寸；rot = 旋轉角度
+   ============================================================ */
+const RATIO = 420 / 297;      // A3 高 / 寬
+
+const DEFAULT_ITEMS = [
+  // 圖層 1（最底）：Day 11 底圖
+  { id:'base',   layer:1, name:'Day 11 底圖', type:'img', src:'Day11底圖_工作區域 1.png',
+    cx:0.5, cy:RATIO/2, w:1, h:RATIO, rot:0, op:1, vis:true },
+
+  // 圖層 2：資料夾 3（緞帶蝴蝶結）
+  { id:'ribbon', layer:2, name:'緞帶蝴蝶結（資料夾 3）', type:'ribbon',
+    cx:0.5, cy:0.235 + 0.55, w:0.55, h:1.1, rot:0, op:1, vis:true },
+
+  // 圖層 3：Lace border（左右邊 + 兩條斜角）
+  { id:'laceL',  layer:3, name:'Lace 左邊', type:'lace', src:'lace-border.html',
+    cx:0.03, cy:RATIO/2, w:1.5, h:0.13, rot:90, op:1, vis:true },
+  { id:'laceR',  layer:3, name:'Lace 右邊', type:'lace', src:'lace-border.html',
+    cx:0.97, cy:RATIO/2, w:1.5, h:0.13, rot:90, op:1, vis:true },
+  { id:'laceTL', layer:3, name:'Lace 左上斜角', type:'img', src:'assets/lace-diag.png',
+    cx:0.07, cy:0.10, w:0.7, h:0.13, rot:-45, op:1, vis:true },
+  { id:'laceBR', layer:3, name:'Lace 右下斜角', type:'img', src:'assets/lace-diag.png',
+    cx:0.93, cy:1.31, w:0.7, h:0.13, rot:-45, op:1, vis:true },
+
+  // 圖層 4：資料夾 7（粉色粒子花紋，白底以「正片疊底」去背）
+  { id:'pattern', layer:4, name:'粒子花紋（資料夾 7）', type:'frame', src:'7/standalone/pink-pattern-fast.html',
+    cx:0.5, cy:RATIO/2, w:1.05, h:RATIO*1.05, rot:0, op:1, vis:true, real:true },
+
+  // 圖層 5（最上）：Day 11 字，拆成 9 塊（座標由原圖 3508px 寬換算）
+  { id:'textTL', layer:5, name:'字：左上', type:'img', src:'text/tl.png',
+    cx:0.2137, cy:0.4775, w:0.1793, h:0.0439, rot:0, op:1, vis:true },
+  { id:'textTR', layer:5, name:'字：右上', type:'img', src:'text/tr.png',
+    cx:0.8264, cy:0.4775, w:0.1784, h:0.0439, rot:0, op:1, vis:true },
+  { id:'textMainW', layer:5, name:'字：中間大字（白色）', type:'img', src:'text/main-white.png',
+    cx:0.5000, cy:0.7504, w:0.7805, h:0.2973, rot:0, op:1, vis:true },
+  { id:'textMainPT', layer:5, name:'字：中間粉色字・上排', type:'img', src:'text/main-pink-top.png',
+    cx:0.4896, cy:0.5882, w:0.3475, h:0.0282, rot:0, op:1, vis:true },
+  { id:'textMainPB', layer:5, name:'字：中間粉色字・下排', type:'img', src:'text/main-pink-bottom.png',
+    cx:0.5084, cy:0.8080, w:0.6702, h:0.0271, rot:0, op:1, vis:true },
+  { id:'textRowL', layer:5, name:'字：中間下方・左', type:'img', src:'text/row-l.png',
+    cx:0.2524, cy:1.0544, w:0.2135, h:0.0439, rot:0, op:1, vis:true },
+  { id:'textRowM', layer:5, name:'字：中間下方・中', type:'img', src:'text/row-m.png',
+    cx:0.4993, cy:1.0536, w:0.1451, h:0.0422, rot:0, op:1, vis:true },
+  { id:'textRowR', layer:5, name:'字：中間下方・右', type:'img', src:'text/row-r.png',
+    cx:0.7621, cy:1.0544, w:0.1970, h:0.0439, rot:0, op:1, vis:true },
+  { id:'textLast', layer:5, name:'字：最下面', type:'img', src:'text/last.png',
+    cx:0.4979, cy:1.2357, w:0.5887, h:0.1534, rot:0, op:1, vis:true },
+];
+
+const KEY = 'day11-a3-layout-v2';
+let items = clone(DEFAULT_ITEMS);
+let selId = null;
+let ribbonInst = null;
+let savedAt = 0;
+
+function clone(o){ return JSON.parse(JSON.stringify(o)); }
+function pick(s){
+  if (!s) return {};
+  const {cx,cy,w,h,rot,op,vis} = s; return {cx,cy,w,h,rot,op,vis};
+}
+// 以預設為基礎，套用已儲存的位置（新增的圖層會用預設值）
+function merge(list){
+  return DEFAULT_ITEMS.map(d => Object.assign(clone(d), pick((list || []).find(s => s.id === d.id))));
+}
+let viewRot = 0;
+let savedItems = null;   // layout.json 裡已儲存的圖層設定（供「還原此圖層」使用）
+let pauseEdit = true;   // 編輯時暫停動畫，預覽時才播放
+let ribbonDone = false, animGrace = true;   // 0 或 90：整個畫布的檢視方向（只影響顯示，不影響版面座標）
+function payload(){ return { t: savedAt, viewRot, pauseEdit, laceInstant, items }; }
+function readLocal(){
+  try {
+    const raw = JSON.parse(localStorage.getItem(KEY));
+    if (Array.isArray(raw)) return { t: 0, items: raw };   // 舊格式
+    return raw;
+  } catch(e) { return null; }
+}
+function persist(){                     // 自動暫存在瀏覽器
+  savedAt = Date.now();
+  try { localStorage.setItem(KEY, JSON.stringify(payload())); } catch(e) {}
+}
+function toast(msg){
+  let el = document.getElementById('toast');
+  if (!el) { el = document.createElement('div'); el.id = 'toast'; document.body.appendChild(el); }
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(toast._t); toast._t = setTimeout(() => el.classList.remove('show'), 2200);
+}
+async function saveNow(){               // 「儲存」按鈕：寫入資料夾的 layout.json
+  persist();
+  try {
+    const r = await fetch('save', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload(), null, 2) });
+    if (!r.ok) throw new Error(r.status);
+    toast('✓ 已儲存到 layout.json');
+  } catch(e) {
+    // 沒有用 start.bat 開啟時無法寫檔，改成下載
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(payload(), null, 2)], {type:'application/json'}));
+    a.download = 'layout.json'; a.click();
+    toast('已下載 layout.json（請放進資料夾）');
+  }
+}
+async function loadFile(){
+  try {
+    const r = await fetch('layout.json?_=' + Date.now(), { cache:'no-store' });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch(e) { return null; }
+}
+/* ---------- 粒子品質（效能）---------- */
+const QUALITY = {
+  low:    { label:'省電（20fps・稀疏）', fps:20, density:0.4 },
+  smooth: { label:'流暢（30fps・較疏）', fps:30, density:0.6 },
+  std:    { label:'標準（30fps）',       fps:30, density:1 },
+  fine:   { label:'精細（60fps）',       fps:60, density:1 },
+};
+let quality = 'std';            // 預設固定為「標準（30fps）」；每次開啟都從標準開始，換檔只影響當次
+function patternSrc(it) {
+  const q = QUALITY[quality];
+  return `${it.src}?fps=${q.fps}&density=${q.density}&gate=1&rev=2600`;
+}
+
+/* ---------- 蕾絲：依長寬比決定原生長度，避免拉伸 ---------- */
+const LACE_H = 109;   // lace-border.html 的原生高度
+const laceNW = it => Math.max(200, Math.round(it.w / it.h * LACE_H));
+let laceInstant = false;           // 蕾絲直接顯示完成圖，不播生長動畫（最省效能）
+const laceGrowing = new Set();     // 目前正在生長的蕾絲（左右兩條，同時長）
+const laceReady = new Set();
+const laceBusy = () => !laceInstant && laceGrowing.size > 0;
+let patternRevealed = false;       // 粒子花紋要等前導動畫（蕾絲＋緞帶）結束才出現
+let introStarted = false, ribbonFailed = false;
+// 前導動畫時間設定（毫秒）
+const RIBBON_GROW = 5600;     // 緞帶生長時間（原 4600 再多 1 秒）
+const RIBBON_SKIP = 1000;     // 切掉緞帶動畫開頭 0~1 秒
+const RIBBON_DELAY = 400;
+const PATTERN_EARLY = 2000;   // 粒子花紋比緞帶結束時間提早 2 秒出現
+let revealAt = 0;
+
+function setLaceSrc(it, f) {
+  it._nw = laceNW(it);
+  const base = `${it.src}?bg=transparent&mask=ebc0dd&color=ffffff&loop=0&d=1&w=${it._nw}`;
+  if (laceInstant) { laceGrowing.delete(it.id); f.src = base + '&still=1'; return; }
+  laceGrowing.add(it.id); laceReady.delete(it.id);
+  // hold=1：載入後先等待，和緞帶同一時間一起開始長
+  f.src = base + `&fps=30&speed=0.013&hold=1&id=${it.id}`;
+  applyAnim();
+}
+// 手勢觸發：左右兩條會生長的蕾絲重新長一次（不暫停粒子花紋）
+function regrowLaces(){
+  GEST.locked = true; GEST.regrow = new Set();
+  clearTimeout(GEST.failsafe); GEST.failsafe = setTimeout(unlockGesture, GEST_FAILSAFE_MS);
+  items.filter(i => i.type === 'lace').forEach(it => {
+    GEST.regrow.add(it.id);
+    const f = els[it.id] && els[it.id].querySelector('iframe'); if (!f) return;
+    it._nw = laceNW(it);
+    f.src = `${it.src}?bg=transparent&mask=ebc0dd&color=ffffff&loop=0&d=1&w=${it._nw}&fps=30&speed=0.013&id=${it.id}`;
+  });
+}
+// 蕾絲動畫完整跑完 → 解除鎖定，並從「現在」開始冷卻 7 秒
+function unlockGesture(){
+  if (!GEST.locked) return;
+  clearTimeout(GEST.failsafe);
+  GEST.locked = false; GEST.regrow.clear(); GEST.cool = performance.now() + GEST_COOL_MS;
+}
+function startLace(id){
+  const f = els[id] && els[id].querySelector('iframe');
+  if (f && f.contentWindow) f.contentWindow.postMessage('day11-start', '*');
+}
+// 前導動畫的起跑：左右蕾絲都載入完成、緞帶也就緒後，蕾絲與緞帶同一瞬間開始長
+function tryIntro(){
+  if (introStarted) return;
+  for (const id of laceGrowing) if (!laceReady.has(id)) return;
+  if (!ribbonInst && !ribbonFailed) return;
+  introStarted = true;
+  performance.mark('introStart');
+  if (ribbonInst) { ribbonInst.set({ delayMs: RIBBON_DELAY }); ribbonInst.replay(); }
+  revealAt = performance.now() + (RIBBON_GROW - RIBBON_SKIP + RIBBON_DELAY) - PATTERN_EARLY;
+  laceGrowing.forEach(startLace);
+  clearTimeout(introCheck._t); introCheck._t = setTimeout(introCheck, Math.max(0, revealAt - performance.now()));
+}
+// 蕾絲與緞帶都長完 → 粒子花紋開始長出來
+function introCheck(){
+  if (laceBusy()) return;                                   // 蕾絲還在長就先等
+  if (ribbonFailed || ribbonDone || (introStarted && performance.now() >= revealAt)) { lacesFinished(); return; }
+  if (introStarted) { clearTimeout(introCheck._t); introCheck._t = setTimeout(introCheck, Math.max(0, revealAt - performance.now()) + 20); }
+}
+function lacesFinished(){
+  if (!patternRevealed) { performance.mark('introDone'); revealPattern(); }
+  // 粒子再跑幾秒累積畫面，之後（編輯模式）才暫停
+  animGrace = true; applyAnim();
+  clearTimeout(lacesFinished._t);
+  lacesFinished._t = setTimeout(() => { animGrace = false; applyAnim(); }, 4500);
+}
+// 粒子花纹：顺着流向由上往下「长」出来（只画出扫描线以上的粒子，粒子本身照常流动，边缘清楚）
+function revealPattern(){
+  patternRevealed = true;
+  const el = els.pattern; if (!el) return;
+  el.style.visibility = '';
+  const f = el.querySelector('iframe');
+  if (f && f.contentWindow) f.contentWindow.postMessage('day11-reveal', '*');
+  setTimeout(() => { camReady = true; placeCamUI(); qSel.disabled = false; }, 2800);   // 粒子花紋全部出現後，才顯示鏡頭開關，並開放調整粒子品質（FPS）
+}
+window.addEventListener('message', (e) => {
+  const m = e.data;
+  if (!m || !m.day11) return;
+  if (m.day11 === 'lace-ready') {
+    laceReady.add(m.id);
+    if (introStarted) startLace(m.id); else tryIntro();
+  } else if (m.day11 === 'lace-done') {
+    if (GEST.locked && GEST.regrow.delete(m.id) && GEST.regrow.size === 0) unlockGesture();
+    laceGrowing.delete(m.id);
+    introCheck();
+  }
+});
+const laceTimers = {};
+function refreshLace(it) {      // 改變長度後，稍等一下再重新載入（會重播一次生長動畫）
+  if (it.type !== 'lace') return;
+  clearTimeout(laceTimers[it.id]);
+  laceTimers[it.id] = setTimeout(() => {
+    if (laceNW(it) === it._nw) return;
+    setLaceSrc(it, els[it.id].querySelector('iframe'));
+  }, 500);
+}
+
+/* ---------- 舞台 ---------- */
+const view = document.getElementById('view');
+const stage = document.getElementById('stage');
+let S = 800;   // 舞台像素寬度
+
+function fitStage(){
+  const pad = document.body.classList.contains('preview') ? 0 : 24;
+  const aw = view.clientWidth - pad*2, ah = view.clientHeight - pad*2;
+  // 旋轉 90° 時，畫布橫放：可視寬 = S*RATIO、可視高 = S
+  S = Math.floor(viewRot ? Math.min(aw / RATIO, ah) : Math.min(aw, ah / RATIO));
+  stage.style.transform = viewRot ? 'rotate(90deg)' : 'none';
+  applyCamRot();
+  stage.style.width = S + 'px';
+  stage.style.height = Math.round(S * RATIO) + 'px';
+  items.forEach(applyItem);
+  placeCamUI();
+}
+
+const els = {};
+function build(){
+  stage.innerHTML = '';
+  introStarted = false; patternRevealed = false; ribbonFailed = false; ribbonDone = false;
+  laceGrowing.clear(); laceReady.clear();
+  items.slice().sort((a,b) => a.layer - b.layer).forEach(it => {
+    const el = document.createElement('div');
+    el.className = 'item'; el.dataset.id = it.id;
+    if (it.id === 'pattern' && !patternRevealed) el.style.visibility = 'hidden';
+    el.style.zIndex = it.layer * 10;
+    const inner = document.createElement('div'); inner.className = 'inner';
+    el.appendChild(inner);
+
+    if (it.type === 'img') {
+      const img = new Image(); img.src = encodeURI(it.src); img.draggable = false;
+      el.replaceChild(img, inner);
+    } else if (it.type === 'frame' || it.type === 'lace') {
+      const f = document.createElement('iframe');
+      f.title = it.name;
+      f.setAttribute('allowtransparency', 'true');
+      f.style.background = 'transparent';
+      if (it.type === 'lace') setLaceSrc(it, f);
+      else { f.src = it.id === 'pattern' ? patternSrc(it) : it.src; if (it.id === 'pattern') f.onload = () => applyAnim(); }
+      if (it.blend) el.style.mixBlendMode = it.blend;
+      inner.appendChild(f);
+    }
+    // 拖曳蓋板與縮放把手
+    const cover = document.createElement('div'); cover.className = 'cover';
+    el.appendChild(cover);
+    cover.addEventListener('pointerdown', e => startDrag(e, it, 'move'));
+    // 三個把手：右下角＝等比縮放、右邊＝只改寬、下邊＝只改高
+    [['size','handle corner'], ['w','handle edge-w'], ['h','handle edge-h']].forEach(([m, cls]) => {
+      const hd = document.createElement('div'); hd.className = cls;
+      hd.title = m === 'size' ? '等比縮放' : m === 'w' ? '只調整寬' : '只調整高';
+      hd.addEventListener('pointerdown', e => startDrag(e, it, m));
+      el.appendChild(hd);
+    });
+    stage.appendChild(el);
+    els[it.id] = el;
+  });
+
+  const rb = items.find(i => i.type === 'ribbon');
+  if (rb) {
+    const inner = els[rb.id].querySelector('.inner');
+    inner.style.width = '100%'; inner.style.height = '100%';
+    inner.style.transform = 'none';
+    try {
+      ribbonDone = false;
+      ribbonInst = RibbonDots.mount(inner, {
+        background: 'transparent',
+        pixelDensity: 1,                                  // 不跟著螢幕放大 2~3 倍，運算量少很多
+        delayMs: 1e7,                                     // 先不長，等 tryIntro() 與蕾絲同時起跑
+        skipMs: RIBBON_SKIP,                                     // 切掉緞帶動畫的第 0~1 秒，從第 1 秒開始
+        growMs: RIBBON_GROW,                              // 緞帶生長時間（毫秒）
+        onComplete: () => { ribbonDone = true; applyAnim(); introCheck(); },
+      });
+      ribbonInst.p5.frameRate(24);                        // 降低幀率，讓整體更順
+    }
+    catch (err) { ribbonFailed = true; console.warn('緞帶載入失敗（需要網路載入 p5.js，或無法讀取 3/ribbon-dots.js）', err); }
+  }
+  camReady = false; mountCamUI(); qSel.disabled = true;
+  fitStage();
+  tryIntro();
+  if (!laceBusy() && ribbonInst) { introStarted = true; ribbonInst.set({ delayMs: RIBBON_DELAY }); ribbonInst.replay(); revealAt = performance.now() + (RIBBON_GROW - RIBBON_SKIP + RIBBON_DELAY) - PATTERN_EARLY; introCheck(); }   // 沒有蕾絲要長時，緞帶直接開始
+}
+
+function applyItem(it){
+  const el = els[it.id]; if (!el) return;
+  const wpx = it.w * S, hpx = it.h * S;
+  el.style.width = wpx + 'px'; el.style.height = hpx + 'px';
+  el.style.left = (it.cx * S - wpx/2) + 'px';
+  el.style.top  = (it.cy * S - hpx/2) + 'px';
+  el.style.transform = `rotate(${it.rot}deg)`;
+  el.style.opacity = it.op;
+  el.style.display = it.vis ? '' : 'none';
+  if (it.type === 'frame' || it.type === 'lace') {
+    const inner = el.querySelector('.inner'), f = inner.firstChild;
+    if (it.real) {
+      // 真實尺寸：iframe 就是實際顯示大小，不做縮放（較省效能）
+      // 至少以 900px 寬渲染，讓小視窗時粒子的粗細比例與原作一致
+      const k = Math.max(1, 900 / wpx);
+      f.style.width = wpx * k + 'px'; f.style.height = hpx * k + 'px';
+      inner.style.transform = k === 1 ? 'none' : `scale(${1 / k})`;
+    } else {
+      // 蕾絲：等比例縮放（以高度為準），長度靠 nw 延伸，不拉伸變形
+      const nh = LACE_H, nw = laceNW(it);
+      f.style.width = nw + 'px'; f.style.height = nh + 'px';
+      inner.style.transform = `scale(${wpx/nw}, ${hpx/nh})`;
+    }
+  }
+  el.classList.toggle('sel', it.id === selId);
+  if (it.id === 'textLast') placeCamUI();                 // 開啟鏡頭的按鈕跟著最下面那塊字走
+}
+
+/* ---------- 拖曳 / 縮放 ---------- */
+/* ---------- 復原 / 重做（Ctrl+Z / Ctrl+Shift+Z、Ctrl+Y）----------
+   每一步記錄所有圖層的位置、大小、旋轉、透明度、顯示狀態。拖曳一次、調整滑桿（連續調整合併成一步）、
+   隱藏/顯示、還原圖層、還原預設、匯入，都是一步。 */
+const HIST_MAX = 100;
+let undoStack = [], redoStack = [], burst = null;
+const snap = () => JSON.stringify(items.map(i => Object.assign({ id: i.id }, pick(i))));
+function commitStep(before){
+  if (before === snap()) return;                         // 沒有實際變動就不記錄
+  undoStack.push(before); if (undoStack.length > HIST_MAX) undoStack.shift();
+  redoStack.length = 0;
+}
+function noteEdit(){                                     // 連續調整（例如拖滑桿）合併成一步
+  if (!burst) burst = { before: snap(), t: 0 };
+  clearTimeout(burst.t);
+  burst.t = setTimeout(flushBurst, 600);
+}
+function flushBurst(){
+  if (!burst) return;
+  clearTimeout(burst.t); const b = burst.before; burst = null; commitStep(b);
+}
+function restoreSnap(s){
+  JSON.parse(s).forEach(o => { const it = items.find(i => i.id === o.id); if (it) Object.assign(it, pick(o)); });
+  items.forEach(it => { applyItem(it); refreshLace(it); });
+  renderLayers(); renderCtl(); persist();
+  window.dispatchEvent(new Event('resize'));             // 緞帶依容器尺寸重新配置
+}
+function undo(){
+  flushBurst();
+  if (!undoStack.length) { toast('沒有可復原的步驟'); return; }
+  redoStack.push(snap()); restoreSnap(undoStack.pop());
+  toast('↶ 已復原（剩 ' + undoStack.length + ' 步）');
+}
+function redo(){
+  flushBurst();
+  if (!redoStack.length) { toast('沒有可重做的步驟'); return; }
+  undoStack.push(snap()); restoreSnap(redoStack.pop());
+  toast('↷ 已重做');
+}
+
+function startDrag(e, it, mode){
+  e.preventDefault(); e.stopPropagation();
+  flushBurst(); const beforeSnap = snap();
+  select(it.id);
+  const sx = e.clientX, sy = e.clientY;
+  const o = clone(it);
+  const rad = it.rot * Math.PI / 180, cos = Math.cos(rad), sin = Math.sin(rad);
+  const target = e.currentTarget;
+  target.setPointerCapture(e.pointerId);
+  const move = ev => {
+    let dx = (ev.clientX - sx) / S, dy = (ev.clientY - sy) / S;
+    if (viewRot) { const t = dx; dx = dy; dy = -t; }   // 畫布順時針轉 90° 後，滑鼠位移換回畫布座標
+    if (mode === 'move') {
+      it.cx = o.cx + dx; it.cy = o.cy + dy;
+    } else {
+      // 轉到圖層本身座標，再縮放
+      const lx =  dx*cos + dy*sin, ly = -dx*sin + dy*cos;
+      if (mode === 'size') {                       // 等比縮放，中心不動
+        const k = Math.max(0.05, 1 + (lx/o.w + ly/o.h));
+        it.w = o.w * k; it.h = o.h * k;
+      } else if (mode === 'w') {                   // 只改寬，左邊固定
+        it.w = Math.max(0.02, o.w + lx);
+        const a = (it.w - o.w) / 2;
+        it.cx = o.cx + a * cos; it.cy = o.cy + a * sin;
+      } else {                                     // 只改高，上邊固定
+        it.h = Math.max(0.02, o.h + ly);
+        const b = (it.h - o.h) / 2;
+        it.cx = o.cx - b * sin; it.cy = o.cy + b * cos;
+      }
+    }
+    applyItem(it); syncCtl(); refreshLace(it);
+  };
+  const up = () => {
+    target.removeEventListener('pointermove', move);
+    target.removeEventListener('pointerup', up);
+    persist(); commitStep(beforeSnap);
+    if (it.type === 'ribbon') window.dispatchEvent(new Event('resize'));
+  };
+  target.addEventListener('pointermove', move);
+  target.addEventListener('pointerup', up);
+}
+
+/* ---------- 面板 ---------- */
+const layersEl = document.getElementById('layers');
+const ctl = document.getElementById('ctl');
+
+function renderLayers(){
+  layersEl.innerHTML = '';
+  items.slice().sort((a,b) => b.layer - a.layer).forEach(it => {
+    const d = document.createElement('div');
+    d.className = 'layer' + (it.id === selId ? ' sel' : '');
+    d.innerHTML = `<span class="n">${it.layer}</span><span class="t">${it.name}</span><button title="顯示/隱藏">${it.vis ? '👁' : '🚫'}</button>`;
+    d.addEventListener('click', () => select(it.id));
+    d.querySelector('button').addEventListener('click', e => {
+      e.stopPropagation(); flushBurst(); const b = snap(); it.vis = !it.vis; applyItem(it); persist(); commitStep(b); renderLayers();
+    });
+    layersEl.appendChild(d);
+  });
+}
+
+const FIELDS = [
+  ['cx','X 中心',0,1,0.001], ['cy','Y 中心',0,RATIO,0.001],
+  ['w','寬',0.02,2,0.001],   ['h','高',0.02,2.5,0.001],
+  ['rot','旋轉°',-180,180,0.5], ['op','透明度',0,1,0.01],
+];
+const defOf = it => DEFAULT_ITEMS.find(d => d.id === it.id);
+const getSW = it => it.w / defOf(it).w * 100;               // 寬：相對預設的百分比
+const getSH = it => it.h / defOf(it).h * 100;               // 高：相對預設的百分比
+const getScale = it => Math.sqrt(getSW(it) * getSH(it));    // 等比：兩者的幾何平均
+function setScale(it, pct) {                                 // 等比縮放，保留目前的寬高比例，中心不動
+  const f = pct / getScale(it);
+  it.w *= f; it.h *= f;
+}
+function renderCtl(){
+  const it = items.find(i => i.id === selId);
+  if (!it) { ctl.innerHTML = '<div style="opacity:.6">點選圖層以調整位置與大小</div>'; return; }
+  ctl.innerHTML = `<b>${it.name}</b>`
+    + `<label class="big">寬 %<input type="range" data-k="sw" min="5" max="400" step="1"><input type="number" data-n="sw" step="1"></label>`
+    + `<label class="big">高 %<input type="range" data-k="sh" min="5" max="400" step="1"><input type="number" data-n="sh" step="1"></label>`
+    + `<label class="big">等比 %<input type="range" data-k="scale" min="10" max="300" step="1"><input type="number" data-n="scale" step="1"></label>`
+    + `<details><summary>進階（位置／寬高／旋轉／透明度）</summary>`
+    + FIELDS.map(([k,l,mn,mx,st]) =>
+      `<label>${l}<input type="range" data-k="${k}" min="${mn}" max="${mx}" step="${st}"><input type="number" data-n="${k}" step="${st}"></label>`).join('')
+    + `</details>`
+    + `<button id="resetLayer" style="margin-top:8px;font:inherit;padding:4px 12px;border-radius:999px;border:1px solid #fa68b8;background:#fff;color:#7a2150;cursor:pointer" title="把這個圖層還原成已儲存（layout.json）或預設的位置與大小">↺ 還原此圖層</button>`;
+  ctl.querySelector('#resetLayer').onclick = () => {
+    flushBurst(); const b = snap();
+    const src = (savedItems && savedItems.find(s => s.id === it.id)) || defOf(it);   // 優先用已儲存的版本，沒有就用預設
+    Object.assign(it, pick(src));
+    applyItem(it); refreshLace(it); persist(); commitStep(b); renderCtl(); renderLayers();
+    toast('已還原「' + it.name + '」');
+  };
+  ctl.querySelectorAll('input').forEach(inp => inp.addEventListener('input', () => {
+    const k = inp.dataset.k || inp.dataset.n;
+    const v = parseFloat(inp.value) || 0;
+    noteEdit();
+    if (k === 'scale') setScale(it, Math.max(1, v));
+    else if (k === 'sw') it.w = defOf(it).w * Math.max(1, v) / 100;
+    else if (k === 'sh') it.h = defOf(it).h * Math.max(1, v) / 100;
+    else it[k] = v;
+    applyItem(it); syncCtl(inp); persist(); refreshLace(it);
+    if (it.type === 'ribbon') window.dispatchEvent(new Event('resize'));
+  }));
+  syncCtl();
+}
+function syncCtl(skip){
+  const it = items.find(i => i.id === selId); if (!it) return;
+  ctl.querySelectorAll('input').forEach(inp => {
+    if (inp === skip) return;
+    const k = inp.dataset.k || inp.dataset.n;
+    inp.value = k === 'scale' ? Math.round(getScale(it)) : k === 'sw' ? Math.round(getSW(it)) : k === 'sh' ? Math.round(getSH(it)) : +it[k].toFixed(3);
+  });
+}function select(id){
+  selId = id;
+  items.forEach(applyItem);
+  renderLayers(); renderCtl();
+}
+
+/* ---------- 按鈕 ---------- */
+/* ---------- 鏡頭 + 手勢控制（MediaPipe）----------
+   右手：拇指與食指的距離 → 緞帶點的大小（dotSize）與分布（spacing）。兩指張開＝變大、變散；捏在一起＝變小、變密。
+   左手：食指指尖當作滑鼠，在粒子花紋上移動（可互動）。
+   鏡頭框可用滑鼠拖曳，框內會畫出手部骨架。 */
+const CAM = { on:false, busy:false, cancel:false, stream:null, video:null, canvas:null, lm:null, raf:0, lastDet:0, val:0.5, lastSeen:0, lastLeft:0, leftOn:false, px:0.5, py:0.5 };
+const SIZE_RANGE = [0.2, 1.0];       // dotSize：握拳 → 張開
+const SPACING_RANGE = [3.0, 8.0];    // spacing：握拳（密）→ 張開（散）
+const PINCH_MIN = 0.12, PINCH_MAX = 1.0; // 拇指尖到食指尖的距離 ÷ 手掌大小：捏緊 ≈ PINCH_MIN，張到最開 ≈ PINCH_MAX
+const DETECT_MS = 33;                // 偵測頻率約 30 次/秒（延遲比 15 次/秒低一半）；游標另外以 60fps 內插，看起來更跟手
+const RIGHT_LABEL = 'Right', LEFT_LABEL = 'Left';   // MediaPipe 回報的標籤（依實測：Right＝控制點大小的那隻手）
+const HAND_EDGES = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+let camReady = false, camUI = null, camMirror = true, handCursor = null, camSwap = false;
+try { camSwap = localStorage.getItem('day11-cam-swap') === '1'; } catch(e) {}
+try { camMirror = localStorage.getItem('day11-cam-mirror') !== '0'; } catch(e) {}
+const MP_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
+const MP_MODEL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+
+function mountCamUI(){
+  camUI = document.createElement('div'); camUI.id = 'camUI';
+  camUI.innerHTML = '<button id="camBtn">📷 開啟鏡頭</button><div id="camStatus" hidden></div>';
+  stage.appendChild(camUI);
+  handCursor = document.createElement('div'); handCursor.id = 'handCursor'; handCursor.innerHTML = CURSOR_SVG;
+  stage.appendChild(handCursor);
+  camUI.querySelector('#camBtn').onclick = () => (CAM.on || CAM.busy) ? stopCam() : startCam();
+  setCamBtn();
+}
+function placeCamUI(){
+  if (!camUI) return;
+  // 跟著「字：最下面」那一塊走：放在它正下方，水平置中對齊它（你移動那一塊，按鈕也會跟著移動）
+  const last = items.find(i => i.id === 'textLast');
+  const cx = last ? last.cx : 0.5;
+  const bottom = last ? last.cy + last.h / 2 : 1.31;
+  const cy = Math.min(bottom + 0.04, RATIO - 0.05);       // 字下緣再往下 0.04 個畫布寬度；太靠邊就停在畫布內
+  camUI.style.left = (S * cx) + 'px';
+  camUI.style.top = (S * cy) + 'px';
+  camUI.style.fontSize = Math.max(11, S * 0.019) + 'px';
+  camUI.classList.toggle('show', camReady);
+}
+function camStatus(msg){
+  const el = camUI && camUI.querySelector('#camStatus'); if (!el) return;
+  el.hidden = !msg; el.textContent = msg || '';
+}
+function setCamBtn(){
+  const b = camUI && camUI.querySelector('#camBtn'); if (!b) return;
+  b.classList.toggle('on', CAM.on);
+  b.textContent = CAM.on ? '📷 關閉鏡頭' : (CAM.busy ? '載入中…（再按一次取消）' : '📷 開啟鏡頭');
+}
+
+// 畫布旋轉 90° 時，鏡頭框（連同裡面的畫面與骨架）一起旋轉 90°
+function applyCamRot(){
+  const fr = document.getElementById('camFrame'); if (!fr) return;
+  fr.style.transform = viewRot ? 'rotate(90deg)' : 'none';
+  fr.style.transformOrigin = 'center center';
+  if (fr.style.left && fr.style.left !== 'auto') clampCamFrame();
+}
+// 讓鏡頭框（旋轉後的外框）保持在畫面範圍內
+function clampCamFrame(){
+  const fr = document.getElementById('camFrame'); if (!fr) return;
+  const view = document.getElementById('view');
+  const w = fr.offsetWidth, h = fr.offsetHeight;
+  const visW = viewRot ? h : w, visH = viewRot ? w : h;          // 旋轉後看起來的寬高
+  let cx = fr.offsetLeft + w / 2, cy = fr.offsetTop + h / 2;       // 旋轉繞中心，所以中心位置不變
+  cx = Math.max(visW / 2, Math.min(cx, view.clientWidth - visW / 2));
+  cy = Math.max(visH / 2, Math.min(cy, view.clientHeight - visH / 2));
+  fr.style.left = (cx - w / 2) + 'px'; fr.style.top = (cy - h / 2) + 'px';
+  fr.style.right = 'auto'; fr.style.bottom = 'auto';
+}
+
+// 鏡頭框：可用滑鼠拖曳移動（位置記在瀏覽器）
+function buildCamFrame(stream){
+  const fr = document.createElement('div'); fr.id = 'camFrame';
+  fr.innerHTML = '<div id="camHead"><span class="t">⠿ 拖曳移動鏡頭框</span><button id="camSwap" title="左右手判斷整個反過來時按這個">⇄ 左右互換</button><button id="camFlip" title="左右翻轉畫面（若動作方向相反請按）">⇋ 翻轉</button></div>'
+    + '<div id="camBody"><video playsinline muted></video><canvas></canvas></div>'
+    + '<div id="camLegend"><b class="r">粉＝右手</b>：拇指食指張開＝放大、捏緊＝縮小　<b class="l">藍＝左手</b>：食指當滑鼠；左手翻面＝蕾絲重新生長</div>';
+  document.getElementById('view').appendChild(fr);
+  const v = fr.querySelector('video'); v.srcObject = stream; v.muted = true; v.playsInline = true;
+  CAM.video = v; CAM.canvas = fr.querySelector('canvas');
+  const body = fr.querySelector('#camBody'); body.classList.toggle('mirror', camMirror);
+  const sw = fr.querySelector('#camSwap'); sw.classList.toggle('act', camSwap);
+  sw.onclick = () => { camSwap = !camSwap; sw.classList.toggle('act', camSwap); handTrack.R = handTrack.L = null; try { localStorage.setItem('day11-cam-swap', camSwap ? '1' : '0'); } catch(e) {} };
+  fr.querySelector('#camFlip').onclick = () => {
+    camMirror = !camMirror; body.classList.toggle('mirror', camMirror);
+    try { localStorage.setItem('day11-cam-mirror', camMirror ? '1' : '0'); } catch(e) {}
+  };
+  // 還原上次位置
+  try {
+    const pos = JSON.parse(localStorage.getItem('day11-cam-pos'));
+    if (pos) { fr.style.left = pos.x + 'px'; fr.style.top = pos.y + 'px'; fr.style.right = 'auto'; fr.style.bottom = 'auto'; }
+  } catch(e) {}
+  const head = fr.querySelector('#camHead');
+  head.addEventListener('pointerdown', e => {
+    if (e.target.closest('button')) return;
+    e.preventDefault(); head.setPointerCapture(e.pointerId); head.classList.add('drag');
+    const sx = e.clientX, sy = e.clientY, l0 = fr.offsetLeft, t0 = fr.offsetTop;
+    const move = ev => {                       // 畫布旋轉時鏡頭框也旋轉；位移是螢幕座標，直接加到 left/top 即可
+      fr.style.left = (l0 + ev.clientX - sx) + 'px'; fr.style.top = (t0 + ev.clientY - sy) + 'px';
+      fr.style.right = 'auto'; fr.style.bottom = 'auto';
+      clampCamFrame();
+    };
+    const up = () => {
+      head.removeEventListener('pointermove', move); head.removeEventListener('pointerup', up); head.classList.remove('drag');
+      try { localStorage.setItem('day11-cam-pos', JSON.stringify({ x: parseFloat(fr.style.left), y: parseFloat(fr.style.top) })); } catch(e) {}
+    };
+    head.addEventListener('pointermove', move); head.addEventListener('pointerup', up);
+  });
+  applyCamRot();  return fr;
+}
+
+// 畫出手部骨架（畫布用原始影像座標，鏡像由 CSS 處理）
+function drawHands(hands){
+  const cv = CAM.canvas, v = CAM.video; if (!cv || !v) return;
+  if (cv.width !== v.videoWidth) { cv.width = v.videoWidth; cv.height = v.videoHeight; }
+  const g = cv.getContext('2d'); g.clearRect(0, 0, cv.width, cv.height);
+  const W = cv.width, H = cv.height;
+  for (const h of hands) {
+    const col = h.label === RIGHT_LABEL ? '#ff7ac6' : '#6fd8ff';
+    g.strokeStyle = col; g.lineWidth = Math.max(2, W / 120); g.lineCap = 'round';
+    g.beginPath();
+    for (const [a, b] of HAND_EDGES) { g.moveTo(h.p[a].x * W, h.p[a].y * H); g.lineTo(h.p[b].x * W, h.p[b].y * H); }
+    g.stroke();
+    g.fillStyle = '#fff';
+    for (const pt of h.p) { g.beginPath(); g.arc(pt.x * W, pt.y * H, Math.max(2, W / 110), 0, Math.PI * 2); g.fill(); }
+  }
+}
+
+function pinchAmount(p, aspect){
+  const d = (a, b) => Math.hypot((p[a].x - p[b].x) * aspect, p[a].y - p[b].y);
+  const r = d(4, 8) / (d(0, 9) || 1e-6);           // 拇指尖(4)到食指尖(8)的距離，除以手掌大小，遠近不影響數值
+  return Math.min(1, Math.max(0, (r - PINCH_MIN) / (PINCH_MAX - PINCH_MIN)));
+}
+// 左右手判斷：模型的左右標籤偶爾會跳動，單看一幀會認錯。所以：
+//  ‧兩隻手同時出現：直接用「畫面位置」決定（畫面左邊＝左手、右邊＝右手），最可靠
+//  ‧一隻手：沿用上一幀追蹤到的那隻手，並把「模型標籤」與「手在畫面的左右側」累積成分數，分數穩定超過才換身分
+const handTrack = { R:null, L:null };
+function assignHands(hands, now){
+  const fresh = id => handTrack[id] && now - handTrack[id].t < 700;
+  const dispX = h => camMirror ? 1 - h.p[0].x : h.p[0].x;     // 使用者看到的畫面位置
+  hands.forEach(h => { h.id = null; });
+  if (hands.length >= 2) {
+    const two = hands.slice(0, 2).sort((a, b) => dispX(a) - dispX(b));
+    handTrack.L = { x: two[0].p[0].x, y: two[0].p[0].y, t: now, score: -4 }; two[0].id = 'L';
+    handTrack.R = { x: two[1].p[0].x, y: two[1].p[0].y, t: now, score:  4 }; two[1].id = 'R';
+  } else if (hands.length === 1) {
+    const h = hands[0]; let src = null, best = 0.3;
+    for (const k of ['R', 'L']) if (fresh(k)) {
+      const d = Math.hypot(handTrack[k].x - h.p[0].x, handTrack[k].y - h.p[0].y);
+      if (d < best) { best = d; src = handTrack[k]; }
+    }
+    let score = src ? src.score : 0;
+    const labelVote = (h.label === RIGHT_LABEL ? 1 : h.label ? -1 : 0) * (camSwap ? -1 : 1);
+    const sideVote = (dispX(h) - 0.5) * 2;                    // 在畫面右側偏向右手、左側偏向左手
+    score = Math.max(-4, Math.min(4, score * 0.88 + labelVote * 0.8 + sideVote * 0.5));
+    const id = score >= 0 ? 'R' : 'L';
+    handTrack.R = handTrack.L = null;                         // 只剩一隻手：舊軌跡作廢，只保留目前這隻
+    handTrack[id] = { x: h.p[0].x, y: h.p[0].y, t: now, score };
+    h.id = id;
+  }
+  hands.forEach(h => { h.label = h.id === 'R' ? RIGHT_LABEL : (h.id === 'L' ? LEFT_LABEL : ''); });
+}function applyHand(v){
+  const size = SIZE_RANGE[0] + (SIZE_RANGE[1] - SIZE_RANGE[0]) * v;
+  const spacing = SPACING_RANGE[0] + (SPACING_RANGE[1] - SPACING_RANGE[0]) * v;
+  if (ribbonInst) ribbonInst.set({ dotSize: size, spacing });
+}
+// 左手食指的「滑鼠」游標：粉紅色箭頭（內嵌 SVG，不需要圖片檔；箭頭尖端對準食指指尖）。
+// 座標是畫布比例；游標在畫布裡面，畫布旋轉 90° 時它也跟著旋轉 90°。
+const CURSOR_SVG = `<svg viewBox="0 0 32 32" width="100%" xmlns="http://www.w3.org/2000/svg" style="display:block">
+  <path d="M5 3 L5 25 L10.6 19.6 L14.4 28.4 L18.2 26.8 L14.5 18.2 L22 18.2 Z" fill="#ff6fb5" stroke="#ffffff" stroke-width="1.8" stroke-linejoin="round"/>
+  <path d="M7.4 8.2 L7.4 19.2 L10.3 16.4" fill="none" stroke="#ffffff" stroke-opacity=".55" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`;
+// 游標的錨點：箭頭尖端在圖的 (5,3)/32 位置
+const CURSOR_TIP = [5 / 32, 3 / 32];
+function moveCursor(nx, ny){
+  if (!handCursor) return;
+  handCursor.style.display = 'block';
+  handCursor.style.width = Math.max(20, S * 0.045) + 'px';
+  handCursor.style.transform = `translate(${nx * S}px, ${ny * RATIO * S}px) translate(${-CURSOR_TIP[0] * 100}%, ${-CURSOR_TIP[1] * 100}%)`;   // 箭頭尖端對準食指
+}
+function hideCursor(){ if (handCursor) handCursor.style.display = 'none'; }
+// 左手手勢：把左手「翻面」（手心 ↔ 手背）→ 蕾絲立刻重新生長一次
+//   判斷方式：手腕(0)、食指根(5)、小指根(17) 三點在畫面上的繞行方向（有號面積）。手翻面時這個方向會反過來，
+//   不需要手指擺特定姿勢，也不必翻回來；翻面的過程手會有一瞬間側著（面積≈0），那一瞬間直接略過。
+const GEST = { sign:0, tSign:0, cand:0, candCnt:0, cool:0, locked:false, regrow:new Set(), failsafe:0 };
+const GEST_MIN_AREA = 0.12;     // 面積（以手掌大小正規化）小於這個值＝手側著，不判斷
+const GEST_CONFIRM = 2;         // 反向的狀態連續出現幾幀才算翻面（30 次/秒 → 約 0.07 秒）
+const GEST_REF_MS = 1500;       // 手離開鏡頭、或太久沒看到參考面，超過這個時間就重新建立參考
+const GEST_COOL_MS = 7000;      // 蕾絲動畫「完整跑完」之後再冷卻 7 秒，才會接受下一次翻面
+const GEST_FAILSAFE_MS = 15000; // 保險：蕾絲動畫超過這個時間還沒回報跑完，就自動解除鎖定
+function palmSide(p, aspect){
+  const ax = (p[5].x - p[0].x) * aspect, ay = p[5].y - p[0].y;
+  const bx = (p[17].x - p[0].x) * aspect, by = p[17].y - p[0].y;
+  const palm = Math.hypot((p[9].x - p[0].x) * aspect, p[9].y - p[0].y) || 1e-6;
+  return (ax * by - ay * bx) / (palm * palm);
+}
+function gestureStep(left, aspect, now){
+  const G = GEST;
+  if (!left || G.locked || now < G.cool) return false;     // 動畫還在跑（鎖定中）或冷卻中：不接受新的翻面
+  const a = palmSide(left.p, aspect);
+  if (Math.abs(a) < GEST_MIN_AREA) return false;            // 手側著（翻面的中間瞬間）：先略過
+  const s = a > 0 ? 1 : -1;
+  if (G.sign === 0 || now - G.tSign > GEST_REF_MS) { G.sign = s; G.tSign = now; G.cand = 0; G.candCnt = 0; return false; }
+  if (s === G.sign) { G.tSign = now; G.cand = 0; G.candCnt = 0; return false; }
+  G.candCnt = (G.cand === s) ? G.candCnt + 1 : 1; G.cand = s;
+  if (G.candCnt >= GEST_CONFIRM) {                           // 翻面完成 → 馬上重播蕾絲
+    G.sign = s; G.tSign = now; G.cand = 0; G.candCnt = 0;
+    regrowLaces(); camStatus('✦ 蕾絲重新生長');
+    return true;
+  }
+  return false;
+}// 左手 → 粒子花紋的「滑鼠」：手在鏡頭畫面中的位置對應到整張畫布，再換算成粒子花紋本身的座標
+function sendPointer(nx, ny, inside){
+  const it = items.find(i => i.id === 'pattern'); if (!it || !els.pattern) return;
+  const f = els.pattern.querySelector('iframe'); if (!f || !f.contentWindow) return;
+  const u = (nx - (it.cx - it.w / 2)) / it.w, v = (ny * RATIO - (it.cy - it.h / 2)) / it.h;
+  f.contentWindow.postMessage({ day11: 'pointer', x: u, y: v, inside }, '*');
+}
+
+async function startCam(){
+  if (CAM.on || CAM.busy) return;
+  CAM.busy = true; CAM.cancel = false; setCamBtn(); camStatus('載入手勢模型…');
+  try {
+    const { FilesetResolver, HandLandmarker } = await import(MP_BASE + '/vision_bundle.mjs');
+    const fileset = await FilesetResolver.forVisionTasks(MP_BASE + '/wasm');
+    const make = d => HandLandmarker.createFromOptions(fileset, { baseOptions:{ modelAssetPath: MP_MODEL, delegate: d }, runningMode:'VIDEO', numHands:2 });
+    try { CAM.lm = await make('GPU'); } catch(e) { CAM.lm = await make('CPU'); }
+    if (CAM.cancel) throw new Error('已取消');
+    camStatus('請允許使用鏡頭…');
+    CAM.stream = await navigator.mediaDevices.getUserMedia({ video:{ width:{ideal:320 }, height:{ ideal:240 }, frameRate:{ ideal:30 } }, audio:false });
+    if (CAM.cancel) throw new Error('已取消');
+    const fr = buildCamFrame(CAM.stream); const v = CAM.video;
+    await v.play();
+    fr.style.display = 'block';
+    CAM.on = true; CAM.busy = false; CAM.lastSeen = CAM.lastLeft = performance.now(); CAM.leftOn = false;
+    setCamBtn(); applyAnim();
+    camStatus('右手拇指食指距離＝點的大小與分布　左手食指＝滑鼠');
+    // 偵測與顯示分開：偵測約 30 次/秒；游標與指針位置每個畫面幀都向目標內插，不會一格一格跳
+    let tx = 0.5, ty = 0.5, leftShown = false;
+    const tick = () => {
+      if (!CAM.on) return;
+      const now = performance.now();
+      if (now - CAM.lastDet >= DETECT_MS && v.readyState >= 2) {
+        CAM.lastDet = now;
+        const r = CAM.lm.detectForVideo(v, now);
+        const labels = r.handedness || r.handednesses || [];
+        const hands = (r.landmarks || []).map((p, i) => ({ p, label: labels[i] && labels[i][0] ? labels[i][0].categoryName : '' }));
+        assignHands(hands, now);
+        drawHands(hands);
+        const right = hands.find(h => h.id === 'R');
+        const left = hands.find(h => h.id === 'L');
+        const aspect = (v.videoWidth / v.videoHeight) || (4 / 3);
+        if (right) {
+          CAM.val += (pinchAmount(right.p, aspect) - CAM.val) * 0.6;    // 平滑，避免數值抖動（係數越大越跟手）
+          applyHand(CAM.val);
+          CAM.lastSeen = now;
+        }
+        gestureStep(left, aspect, now);
+        if (left) {
+          // 取食指指尖（第 8 點）；用中間 70% 的範圍對應整張畫布，手不用伸到鏡頭邊緣
+          const m = 0.15, clampN = (x) => Math.min(1, Math.max(0, (x - m) / (1 - 2 * m)));
+          let sxn = clampN(camMirror ? 1 - left.p[8].x : left.p[8].x), syn = clampN(left.p[8].y);   // 螢幕上的位置（0~1）
+          if (viewRot) { tx = syn; ty = 1 - sxn; } else { tx = sxn; ty = syn; }                    // 畫布順時針轉 90° 時：螢幕向右 ＝ 畫布向上
+          if (!leftShown) { CAM.px = tx; CAM.py = ty; leftShown = true; }   // 剛出現時直接到位，不從舊位置滑過來
+          CAM.leftOn = true; CAM.lastLeft = now;
+        } else if (CAM.leftOn && now - CAM.lastLeft > 400) {
+          sendPointer(CAM.px, CAM.py, false); hideCursor(); CAM.leftOn = false; leftShown = false;   // 左手離開：滑鼠離開畫面
+        }
+        const quiet = GEST.locked;                        // 觸發手勢後，先讓「蕾絲重新生長」的提示多顯示一會兒
+        if (quiet) { /* 保留提示 */ }
+        else if (right) camStatus(`右手拇指食指 ${Math.round(CAM.val * 100)}%` + (left ? '　左手食指：滑鼠' : ''));
+        else if (now - CAM.lastSeen > 1500) camStatus(left ? '左手食指：滑鼠（找不到右手）' : '找不到手，請把手放進鏡頭畫面');
+      }
+      if (CAM.leftOn) {          // 每個畫面幀更新游標（快速追上目標，延遲最小）
+        CAM.px += (tx - CAM.px) * 0.55; CAM.py += (ty - CAM.py) * 0.55;
+        moveCursor(CAM.px, CAM.py); sendPointer(CAM.px, CAM.py, true);
+      }
+      CAM.raf = requestAnimationFrame(tick);
+    };    tick();
+  } catch (e) {
+    console.warn('[camera]', e);
+    const cancelled = CAM.cancel;
+    cleanupCam();
+    camStatus(cancelled ? '' : '無法開啟鏡頭：' + (e && (e.message || e.name) || e));
+    setTimeout(() => { if (!CAM.on) camStatus(''); }, 5000);
+  } finally {
+    CAM.busy = false; setCamBtn();
+  }
+}
+function cleanupCam(){
+  cancelAnimationFrame(CAM.raf);
+  if (CAM.stream) CAM.stream.getTracks().forEach(t => t.stop());
+  const fr = document.getElementById('camFrame'); if (fr) fr.remove();
+  if (CAM.lm && CAM.lm.close) { try { CAM.lm.close(); } catch(e) {} }
+  if (CAM.leftOn) sendPointer(CAM.px, CAM.py, false);
+  hideCursor();
+  CAM.stream = CAM.video = CAM.canvas = CAM.lm = null; CAM.leftOn = false;
+  const was = CAM.on; CAM.on = false;
+  if (was && ribbonInst) ribbonInst.set({ dotSize: 0.6, spacing: 4.4 });   // 關閉鏡頭：回到原本的點大小與分布
+}
+function stopCam(){
+  if (CAM.busy && !CAM.on) { CAM.cancel = true; camStatus('取消中…'); return; }
+  cleanupCam(); camStatus(''); setCamBtn(); applyAnim();
+}
+// 動畫開關：編輯模式（且勾選「編輯時暫停」）時，粒子花紋與緞帶停在目前畫面，操作會順很多
+function applyAnim(){
+  const editing = !document.body.classList.contains('preview');
+  const pause = laceBusy() || (pauseEdit && editing && !animGrace && !CAM.on);   // 蕾絲生長中一律暫停粒子；鏡頭開啟時不暫停（左手滑鼠要能互動）
+  const ribbonPause = pause && !CAM.on;                                // 鏡頭開啟時，緞帶要持續繪製才看得到手勢的變化
+  const pat = els.pattern && els.pattern.querySelector('iframe');
+  if (pat && pat.contentWindow) pat.contentWindow.postMessage(pause ? 'day11-pause' : 'day11-resume', '*');
+  if (ribbonInst && ribbonInst.p5) {
+    if (ribbonPause && ribbonDone) ribbonInst.p5.noLoop(); else ribbonInst.p5.loop();
+  }
+}
+function setRot(r){
+  viewRot = r ? 90 : 0;
+  fitStage(); persist();
+}
+function setFullscreen(on){
+  try {
+    if (on && !document.fullscreenElement) document.documentElement.requestFullscreen();
+    else if (!on && document.fullscreenElement) document.exitFullscreen();
+  } catch(e) {}
+}
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement && document.body.classList.contains('preview')) setPreview(false, true);
+});
+function setPreview(on, fromFs){
+  if (!fromFs) setFullscreen(on);
+  document.body.classList.toggle('preview', on);
+  stage.classList.toggle('edit', !on);
+  document.getElementById('hint').style.display = on ? 'none' : '';
+  selId = on ? null : selId;
+  fitStage(); renderLayers(); renderCtl(); applyAnim();
+}
+document.getElementById('btnPreview').onclick = () => setPreview(true);
+document.getElementById('btnRot').onclick = () => setRot(viewRot ? 0 : 90);
+document.getElementById('btnReset').onclick = () => {
+  if (!confirm('還原為預設位置？（不會刪除已儲存的 layout.json，按「儲存」才會覆蓋）')) return;
+  flushBurst(); const b = snap();
+  try { localStorage.removeItem(KEY); } catch(e) {}
+  items = clone(DEFAULT_ITEMS); selId = null; build(); renderLayers(); renderCtl();
+  commitStep(b);
+};
+document.getElementById('btnSave').onclick = saveNow;
+document.getElementById('btnExport').onclick = () => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(payload(), null, 2)], {type:'application/json'}));
+  a.download = 'day11-layout.json'; a.click();
+};
+document.getElementById('btnLoad').onclick = () => document.getElementById('fileIn').click();
+document.getElementById('fileIn').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  f.text().then(t => {
+    const saved = JSON.parse(t);
+    flushBurst(); const b = snap();
+    items = merge(Array.isArray(saved) ? saved : saved.items);
+    persist(); build(); renderLayers(); renderCtl(); commitStep(b);
+  });
+};
+window.addEventListener('keydown', e => {
+  const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
+  if (mod && k === 's') { e.preventDefault(); saveNow(); return; }
+  const typing = e.target && (e.target.tagName === 'SELECT' || (e.target.tagName === 'INPUT' && e.target.type === 'number'));   // 在數字欄位裡打字時，讓瀏覽器自己處理文字復原
+  if (mod && !typing && k === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+  else if (mod && !typing && k === 'y') { e.preventDefault(); redo(); }
+});const qSel = document.getElementById('quality');
+qSel.innerHTML = Object.entries(QUALITY).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
+qSel.value = quality;
+// 粒子品質（FPS）：前導動畫結束後才開放調整；切換時直接通知粒子花紋即時改變，不重新載入（重新載入會讓花紋消失、要重跑前導動畫）
+qSel.disabled = true;
+qSel.onchange = () => {
+  quality = qSel.value;
+  persist();
+  applyQuality();
+};
+function applyQuality(){
+  const f = els.pattern && els.pattern.querySelector('iframe'); if (!f || !f.contentWindow) return;
+  const q = QUALITY[quality];
+  f.contentWindow.postMessage({ day11: 'quality', fps: q.fps, density: q.density }, '*');
+}
+stage.addEventListener('pointerdown', e => { if (e.target === stage) select(null); });
+window.addEventListener('resize', fitStage);
+window.addEventListener('keydown', e => { if (e.key === 'Escape') setPreview(false); });
+
+(async function init(){
+  const local = readLocal();
+  const file = await loadFile();
+  savedItems = file && file.items ? file.items : null;
+  const src = (file && (!local || (file.t || 0) >= (local.t || 0))) ? file : local;
+  if (src) {
+    items = merge(src.items);
+    savedAt = src.t || 0;
+    qSel.value = quality;           // 不沿用舊設定裡的品質，固定從標準開始
+    viewRot = src.viewRot === 90 ? 90 : 0;
+    if (typeof src.pauseEdit === 'boolean') pauseEdit = src.pauseEdit;
+    if (typeof src.laceInstant === 'boolean') laceInstant = src.laceInstant;
+  }
+  build(); renderLayers(); renderCtl();
+  const pe = document.getElementById('pauseEdit');
+  pe.checked = pauseEdit;
+  pe.onchange = () => { pauseEdit = pe.checked; persist(); applyAnim(); };
+  const li = document.getElementById('laceInstant');
+  li.checked = laceInstant;
+  li.onchange = () => {
+    laceInstant = li.checked; persist();
+    laceGrowing.clear(); laceReady.clear();
+    items.filter(i => i.type === 'lace').forEach(i => setLaceSrc(i, els[i.id].querySelector('iframe')));
+    if (!laceBusy()) lacesFinished();
+  };
+  // 保險：蕾絲 30 秒內沒回報完成就不再等它
+  setTimeout(() => { if (!patternRevealed) { laceGrowing.clear(); ribbonFailed = true; introStarted = true; lacesFinished(); } }, 30000);
+})();
+</script>
+</body>
+</html>
